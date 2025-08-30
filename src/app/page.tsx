@@ -375,7 +375,7 @@ export default function PDFCanvasEditor() {
 
       if (context) {
         await page.render({
-          canvasContext: context,
+          canvas: canvas,
           viewport: viewport
         }).promise;
 
