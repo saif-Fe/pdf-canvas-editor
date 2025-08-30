@@ -5,6 +5,7 @@ import { Stage, Layer, Image as KonvaImage, Transformer, Rect } from 'react-konv
 import Konva from 'konva';
 import useImage from 'use-image';
 import dynamic from 'next/dynamic';
+import NextImage from 'next/image';
 
 interface PageInfo {
   pageNumber: number;
@@ -1029,9 +1030,11 @@ export default function PDFCanvasEditor() {
                   }`}
                   onClick={() => togglePageSelection(index)}
                 >
-                  <img
+                  <NextImage
                     src={page.canvas.toDataURL()}
                     alt={`Page ${page.pageNumber}`}
+                    width={200}
+                    height={250}
                     className="w-full h-auto rounded"
                   />
                   <p className="text-center mt-2 text-sm">Page {page.pageNumber}</p>
@@ -1060,8 +1063,8 @@ export default function PDFCanvasEditor() {
                 )}
                 {multiSelectMode && (
                   <div className="text-xs text-gray-500">
-                    💡 Tip: Use "Import to Bottom Bar" to add pages to the bottom bar for individual selection, 
-                    or "Bulk Import to Canvas" to add all selected pages directly to the canvas in a grid.
+                    💡 Tip: Use &ldquo;Import to Bottom Bar&rdquo; to add pages to the bottom bar for individual selection, 
+                    or &ldquo;Bulk Import to Canvas&rdquo; to add all selected pages directly to the canvas in a grid.
                   </div>
                 )}
               </div>
@@ -1114,9 +1117,11 @@ export default function PDFCanvasEditor() {
                   }`}
                   onClick={() => toggleExtractedImageSelection(image.id)}
                 >
-                  <img
+                  <NextImage
                     src={image.src}
                     alt={`Extracted Image from Page ${image.pageNumber}`}
+                    width={150}
+                    height={150}
                     className="w-full h-auto rounded"
                   />
                   <p className="text-center mt-2 text-xs text-gray-600">
@@ -1144,7 +1149,7 @@ export default function PDFCanvasEditor() {
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-2xl">
             <h2 className="text-xl font-semibold mb-4">Bulk Import Confirmation</h2>
             <p className="text-gray-600 mb-4">
-              You're about to import {pages.filter(p => p.selected).length} pages to the canvas. 
+              You&apos;re about to import {pages.filter(p => p.selected).length} pages to the canvas. 
               They will be arranged in a grid layout for easy organization.
             </p>
             <div className="flex justify-end space-x-2">
@@ -1369,9 +1374,11 @@ export default function PDFCanvasEditor() {
                   }`}
                   onClick={() => toggleBottomBarImageSelection(page)}
                 >
-                  <img
+                  <NextImage
                     src={page.canvas.toDataURL()}
                     alt={`Selected Page ${page.pageNumber}`}
+                    width={64}
+                    height={80}
                     className="w-16 h-20 object-contain rounded"
                   />
                   <p className="text-center mt-1 text-xs text-gray-600">Page {page.pageNumber}</p>
