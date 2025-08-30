@@ -10,6 +10,18 @@ interface PageInfo {
   pageNumber: number;
   canvas: HTMLCanvasElement;
   selected: boolean;
+  extractedImages?: ExtractedImage[];
+}
+
+interface ExtractedImage {
+  id: string;
+  src: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  pageNumber: number;
+  selected: boolean;
 }
 
 interface CanvasImage {
@@ -222,6 +234,14 @@ export default function PDFCanvasEditor() {
   const [cropRect, setCropRect] = useState<{x: number, y: number, width: number, height: number} | null>(null);
   const [snapEnabled, setSnapEnabled] = useState<boolean>(true);
   const [activeSnapGuides, setActiveSnapGuides] = useState<{x: number[], y: number[]}>({x: [], y: []});
+  const [multiSelectMode, setMultiSelectMode] = useState<boolean>(true);
+  const [bulkImportMode, setBulkImportMode] = useState<boolean>(false);
+  const [imageSelectionMode, setImageSelectionMode] = useState<boolean>(false);
+  const [extractedImages, setExtractedImages] = useState<ExtractedImage[]>([]);
+  const [selectedExtractedImages, setSelectedExtractedImages] = useState<ExtractedImage[]>([]);
+  const [bottomBarMultiSelect, setBottomBarMultiSelect] = useState<boolean>(true);
+  const [selectedBottomBarImages, setSelectedBottomBarImages] = useState<PageInfo[]>([]);
+  const [pageSelectionModalOpen, setPageSelectionModalOpen] = useState<boolean>(false);
   const stageRef = useRef<Konva.Stage>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -363,6 +383,7 @@ export default function PDFCanvasEditor() {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
     const extractedPages: PageInfo[] = [];
+    const allExtractedImages: ExtractedImage[] = [];
 
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
@@ -379,25 +400,150 @@ export default function PDFCanvasEditor() {
           viewport: viewport
         }).promise;
 
+        // Extract individual images from the page
+        const pageImages = await extractImagesFromCanvas(canvas, pageNum);
+        allExtractedImages.push(...pageImages);
+
         extractedPages.push({
           pageNumber: pageNum,
           canvas: canvas,
-          selected: false
+          selected: false,
+          extractedImages: pageImages
         });
       }
     }
 
     setPages(extractedPages);
+    setExtractedImages(allExtractedImages);
+    setPageSelectionModalOpen(true);
+  };
+
+  const extractImagesFromCanvas = async (canvas: HTMLCanvasElement, pageNumber: number): Promise<ExtractedImage[]> => {
+    const images: ExtractedImage[] = [];
+    
+    try {
+      // Get image data from canvas
+      const imageData = canvas.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height);
+      if (!imageData) return images;
+
+      // Simple image detection algorithm
+      // This is a basic implementation - you might want to use more sophisticated image detection
+      const detectedRegions = detectImageRegions(imageData, canvas.width, canvas.height);
+      
+      detectedRegions.forEach((region, index) => {
+        // Create a new canvas for each detected image region
+        const imageCanvas = document.createElement('canvas');
+        const imageContext = imageCanvas.getContext('2d');
+        
+        if (imageContext) {
+          imageCanvas.width = region.width;
+          imageCanvas.height = region.height;
+          
+          // Draw the region to the new canvas
+          imageContext.drawImage(
+            canvas,
+            region.x, region.y, region.width, region.height,
+            0, 0, region.width, region.height
+          );
+          
+          const extractedImage: ExtractedImage = {
+            id: `extracted-${pageNumber}-${index}-${Date.now()}`,
+            src: imageCanvas.toDataURL(),
+            x: region.x,
+            y: region.y,
+            width: region.width,
+            height: region.height,
+            pageNumber: pageNumber,
+            selected: false
+          };
+          
+          images.push(extractedImage);
+        }
+      });
+    } catch (error) {
+      console.error('Error extracting images from canvas:', error);
+    }
+    
+    return images;
+  };
+
+  const detectImageRegions = (imageData: ImageData, width: number, height: number) => {
+    const regions: {x: number, y: number, width: number, height: number}[] = [];
+    
+    // Simple algorithm to detect potential image regions
+    // This is a basic implementation - you might want to use more sophisticated detection
+    
+    // For now, let's create some sample regions based on the canvas size
+    // In a real implementation, you'd analyze the image data to find actual images
+    
+    const blockSize = Math.min(width, height) / 4;
+    const cols = Math.floor(width / blockSize);
+    const rows = Math.floor(height / blockSize);
+    
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const x = col * blockSize;
+        const y = row * blockSize;
+        const regionWidth = Math.min(blockSize, width - x);
+        const regionHeight = Math.min(blockSize, height - y);
+        
+        // Only add regions that are reasonably sized
+        if (regionWidth > 50 && regionHeight > 50) {
+          regions.push({
+            x: x,
+            y: y,
+            width: regionWidth,
+            height: regionHeight
+          });
+        }
+      }
+    }
+    
+    return regions;
   };
 
   const togglePageSelection = (pageIndex: number) => {
-    const updatedPages = pages.map((page, index) => 
-      index === pageIndex ? { ...page, selected: !page.selected } : page
-    );
-    setPages(updatedPages);
+    if (multiSelectMode) {
+      // In multi-select mode, just toggle the selection state
+      const updatedPages = pages.map((page, index) => 
+        index === pageIndex ? { ...page, selected: !page.selected } : page
+      );
+      setPages(updatedPages);
+    } else {
+      // In single-select mode, add the page directly to bottom bar
+      const selectedPage = pages[pageIndex];
+      setSelectedPages([selectedPage]);
+    }
+  };
 
-    const newSelectedPages = updatedPages.filter(page => page.selected);
-    setSelectedPages(newSelectedPages);
+  const importSelectedPagesToBottomBar = () => {
+    const selectedPagesToImport = pages.filter(page => page.selected);
+    if (selectedPagesToImport.length === 0) {
+      alert('Please select at least one page to import');
+      return;
+    }
+
+    // Add selected pages to the bottom bar
+    setSelectedPages(selectedPagesToImport);
+    
+    // Reset page selections
+    const updatedPages = pages.map(page => ({ ...page, selected: false }));
+    setPages(updatedPages);
+    
+    // Close the modal
+    setPageSelectionModalOpen(false);
+  };
+
+  const selectAllPages = () => {
+    const updatedPages = pages.map(page => ({ ...page, selected: true }));
+    setPages(updatedPages);
+    setSelectedPages(updatedPages);
+  };
+
+  const deselectAllPages = () => {
+    const updatedPages = pages.map(page => ({ ...page, selected: false }));
+    setPages(updatedPages);
+    setSelectedPages([]);
   };
 
   const addImageToCanvas = (pageInfo: PageInfo) => {
@@ -417,6 +563,174 @@ export default function PDFCanvasEditor() {
     } catch (error) {
       console.error('Error adding image to canvas:', error);
     }
+  };
+
+  const toggleBottomBarImageSelection = (pageInfo: PageInfo) => {
+    if (bottomBarMultiSelect) {
+      const isSelected = selectedBottomBarImages.some(img => img.pageNumber === pageInfo.pageNumber);
+      if (isSelected) {
+        setSelectedBottomBarImages(prev => prev.filter(img => img.pageNumber !== pageInfo.pageNumber));
+      } else {
+        setSelectedBottomBarImages(prev => [...prev, pageInfo]);
+      }
+    } else {
+      // Single select mode - add directly to canvas
+      addImageToCanvas(pageInfo);
+    }
+  };
+
+  const selectAllBottomBarImages = () => {
+    setSelectedBottomBarImages([...selectedPages]);
+  };
+
+  const deselectAllBottomBarImages = () => {
+    setSelectedBottomBarImages([]);
+  };
+
+  const addSelectedBottomBarImagesToCanvas = () => {
+    if (selectedBottomBarImages.length === 0) {
+      alert('Please select at least one image to add to canvas');
+      return;
+    }
+
+    // Calculate grid layout for multiple images
+    const cols = Math.ceil(Math.sqrt(selectedBottomBarImages.length));
+    const rows = Math.ceil(selectedBottomBarImages.length / cols);
+    const spacing = 50;
+    const baseWidth = 300;
+    const baseHeight = 400;
+
+    selectedBottomBarImages.forEach((pageInfo, index) => {
+      try {
+        const col = index % cols;
+        const row = Math.floor(index / cols);
+        
+        const newImage: CanvasImage = {
+          id: `img-${Date.now()}-${Math.random()}-${index}`,
+          src: pageInfo.canvas.toDataURL(),
+          x: col * (baseWidth + spacing) + 50,
+          y: row * (baseHeight + spacing) + 50,
+          width: pageInfo.canvas.width * 0.3,
+          height: pageInfo.canvas.height * 0.3,
+          scaleX: 1,
+          scaleY: 1,
+          rotation: 0,
+        };
+        setCanvasImages(prev => [...prev, newImage]);
+      } catch (error) {
+        console.error('Error adding image to canvas:', error);
+      }
+    });
+
+    // Reset selections
+    setSelectedBottomBarImages([]);
+    setBottomBarMultiSelect(false);
+  };
+
+  const addMultipleImagesToCanvas = () => {
+    const selectedPagesToAdd = pages.filter(page => page.selected);
+    if (selectedPagesToAdd.length === 0) {
+      alert('Please select at least one page to import');
+      return;
+    }
+
+    // Calculate grid layout for multiple images
+    const cols = Math.ceil(Math.sqrt(selectedPagesToAdd.length));
+    const rows = Math.ceil(selectedPagesToAdd.length / cols);
+    const spacing = 50;
+    const baseWidth = 300;
+    const baseHeight = 400;
+
+    selectedPagesToAdd.forEach((pageInfo, index) => {
+      try {
+        const col = index % cols;
+        const row = Math.floor(index / cols);
+        
+        const newImage: CanvasImage = {
+          id: `img-${Date.now()}-${Math.random()}-${index}`,
+          src: pageInfo.canvas.toDataURL(),
+          x: col * (baseWidth + spacing) + 50,
+          y: row * (baseHeight + spacing) + 50,
+          width: pageInfo.canvas.width * 0.3,
+          height: pageInfo.canvas.height * 0.3,
+          scaleX: 1,
+          scaleY: 1,
+          rotation: 0,
+        };
+        setCanvasImages(prev => [...prev, newImage]);
+      } catch (error) {
+        console.error('Error adding image to canvas:', error);
+      }
+    });
+
+    // Close bulk import mode and reset selections
+    setBulkImportMode(false);
+    deselectAllPages();
+    // Close the modal
+    setPageSelectionModalOpen(false);
+  };
+
+  const toggleExtractedImageSelection = (imageId: string) => {
+    const updatedImages = extractedImages.map(img => 
+      img.id === imageId ? { ...img, selected: !img.selected } : img
+    );
+    setExtractedImages(updatedImages);
+    
+    const newSelectedImages = updatedImages.filter(img => img.selected);
+    setSelectedExtractedImages(newSelectedImages);
+  };
+
+  const selectAllExtractedImages = () => {
+    const updatedImages = extractedImages.map(img => ({ ...img, selected: true }));
+    setExtractedImages(updatedImages);
+    setSelectedExtractedImages(updatedImages);
+  };
+
+  const deselectAllExtractedImages = () => {
+    const updatedImages = extractedImages.map(img => ({ ...img, selected: false }));
+    setExtractedImages(updatedImages);
+    setSelectedExtractedImages([]);
+  };
+
+  const addSelectedExtractedImagesToCanvas = () => {
+    const selectedImages = extractedImages.filter(img => img.selected);
+    if (selectedImages.length === 0) {
+      alert('Please select at least one image to import');
+      return;
+    }
+
+    // Calculate grid layout for multiple images
+    const cols = Math.ceil(Math.sqrt(selectedImages.length));
+    const rows = Math.ceil(selectedImages.length / cols);
+    const spacing = 50;
+    const baseWidth = 200;
+    const baseHeight = 200;
+
+    selectedImages.forEach((extractedImage, index) => {
+      try {
+        const col = index % cols;
+        const row = Math.floor(index / cols);
+        
+        const newImage: CanvasImage = {
+          id: `extracted-img-${Date.now()}-${Math.random()}-${index}`,
+          src: extractedImage.src,
+          x: col * (baseWidth + spacing) + 50,
+          y: row * (baseHeight + spacing) + 50,
+          width: extractedImage.width * 0.5,
+          height: extractedImage.height * 0.5,
+          scaleX: 1,
+          scaleY: 1,
+          rotation: 0,
+        };
+        setCanvasImages(prev => [...prev, newImage]);
+      } catch (error) {
+        console.error('Error adding extracted image to canvas:', error);
+      }
+    });
+
+    // Close image selection mode and reset selections
+    setImageSelectionMode(false);
+    deselectAllExtractedImages();
   };
 
   const exportCanvas = () => {
@@ -643,15 +957,74 @@ export default function PDFCanvasEditor() {
       </div>
 
       {/* Page Selection Modal - Show when pages are available but none selected */}
-      {pages.length > 0 && selectedPages.length === 0 && (
+      {pages.length > 0 && pageSelectionModalOpen && !bulkImportMode && !imageSelectionMode && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-4xl max-h-3/4 overflow-auto">
-            <h2 className="text-xl font-semibold mb-4">Select Pages to Import</h2>
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-6xl max-h-3/4 overflow-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold">Select Pages to Import</h2>
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => setPageSelectionModalOpen(false)}
+                  className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded text-sm"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => setMultiSelectMode(!multiSelectMode)}
+                  className={`px-3 py-2 rounded text-sm ${
+                    multiSelectMode 
+                      ? 'bg-blue-500 hover:bg-blue-600 text-white' 
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                  }`}
+                >
+                  {multiSelectMode ? 'Multi-Select: ON' : 'Multi-Select: OFF'}
+                </button>
+                {multiSelectMode && (
+                  <>
+                    <button
+                      onClick={selectAllPages}
+                      className="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded text-sm"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={deselectAllPages}
+                      className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded text-sm"
+                    >
+                      Deselect All
+                    </button>
+                    <button
+                      onClick={importSelectedPagesToBottomBar}
+                      className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded text-sm"
+                      disabled={!pages.some(p => p.selected)}
+                    >
+                      Import to Bottom Bar ({pages.filter(p => p.selected).length})
+                    </button>
+                    <button
+                      onClick={() => setBulkImportMode(true)}
+                      className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-2 rounded text-sm"
+                      disabled={!pages.some(p => p.selected)}
+                    >
+                      Bulk Import to Canvas ({pages.filter(p => p.selected).length})
+                    </button>
+                  </>
+                )}
+                {extractedImages.length > 0 && (
+                  <button
+                    onClick={() => setImageSelectionMode(true)}
+                    className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-2 rounded text-sm"
+                  >
+                    Extract Images ({extractedImages.length})
+                  </button>
+                )}
+              </div>
+            </div>
+            
             <div className="grid grid-cols-4 gap-4 max-h-96 overflow-y-auto">
               {pages.map((page, index) => (
                 <div
                   key={index}
-                  className={`border-2 rounded-lg p-2 cursor-pointer transition-all ${
+                  className={`border-2 rounded-lg p-2 cursor-pointer transition-all relative ${
                     page.selected ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
                   }`}
                   onClick={() => togglePageSelection(index)}
@@ -662,16 +1035,130 @@ export default function PDFCanvasEditor() {
                     className="w-full h-auto rounded"
                   />
                   <p className="text-center mt-2 text-sm">Page {page.pageNumber}</p>
+                  {page.extractedImages && page.extractedImages.length > 0 && (
+                    <p className="text-center text-xs text-blue-600 mt-1">
+                      {page.extractedImages.length} images detected
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
-            <div className="mt-4 flex justify-end">
+            
+            <div className="mt-4 flex justify-between items-center">
+              <div className="text-sm text-gray-600">
+                {pages.filter(p => p.selected).length} of {pages.length} pages selected
+              </div>
+              <div className="flex space-x-2">
+                {!multiSelectMode && (
+                  <button
+                    onClick={() => setSelectedPages(pages.filter(p => p.selected))}
+                    className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded"
+                    disabled={!pages.some(p => p.selected)}
+                  >
+                    Continue with Selected Pages
+                  </button>
+                )}
+                {multiSelectMode && (
+                  <div className="text-xs text-gray-500">
+                    💡 Tip: Use "Import to Bottom Bar" to add pages to the bottom bar for individual selection, 
+                    or "Bulk Import to Canvas" to add all selected pages directly to the canvas in a grid.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Extracted Images Selection Modal */}
+      {imageSelectionMode && extractedImages.length > 0 && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-6xl max-h-3/4 overflow-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold">Select Individual Images to Import</h2>
+              <div className="flex space-x-2">
+                <button
+                  onClick={selectAllExtractedImages}
+                  className="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded text-sm"
+                >
+                  Select All
+                </button>
+                <button
+                  onClick={deselectAllExtractedImages}
+                  className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded text-sm"
+                >
+                  Deselect All
+                </button>
+                <button
+                  onClick={addSelectedExtractedImagesToCanvas}
+                  className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-2 rounded text-sm"
+                  disabled={!extractedImages.some(img => img.selected)}
+                >
+                  Import Selected ({extractedImages.filter(img => img.selected).length})
+                </button>
+                <button
+                  onClick={() => setImageSelectionMode(false)}
+                  className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded text-sm"
+                >
+                  Back to Pages
+                </button>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-6 gap-3 max-h-96 overflow-y-auto">
+              {extractedImages.map((image) => (
+                <div
+                  key={image.id}
+                  className={`border-2 rounded-lg p-2 cursor-pointer transition-all relative ${
+                    image.selected ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
+                  }`}
+                  onClick={() => toggleExtractedImageSelection(image.id)}
+                >
+                  <img
+                    src={image.src}
+                    alt={`Extracted Image from Page ${image.pageNumber}`}
+                    className="w-full h-auto rounded"
+                  />
+                  <p className="text-center mt-2 text-xs text-gray-600">
+                    Page {image.pageNumber}
+                  </p>
+                  <p className="text-center text-xs text-gray-500">
+                    {image.width} × {image.height}
+                  </p>
+                </div>
+              ))}
+            </div>
+            
+            <div className="mt-4 flex justify-between items-center">
+              <div className="text-sm text-gray-600">
+                {extractedImages.filter(img => img.selected).length} of {extractedImages.length} images selected
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Import Confirmation Modal */}
+      {bulkImportMode && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-2xl">
+            <h2 className="text-xl font-semibold mb-4">Bulk Import Confirmation</h2>
+            <p className="text-gray-600 mb-4">
+              You're about to import {pages.filter(p => p.selected).length} pages to the canvas. 
+              They will be arranged in a grid layout for easy organization.
+            </p>
+            <div className="flex justify-end space-x-2">
               <button
-                onClick={() => setSelectedPages(pages.filter(p => p.selected))}
-                className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded"
-                disabled={!pages.some(p => p.selected)}
+                onClick={() => setBulkImportMode(false)}
+                className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded"
               >
-                Continue with Selected Pages
+                Cancel
+              </button>
+              <button
+                onClick={addMultipleImagesToCanvas}
+                className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded"
+              >
+                Import {pages.filter(p => p.selected).length} Pages
               </button>
             </div>
           </div>
@@ -824,24 +1311,73 @@ export default function PDFCanvasEditor() {
       </div>
 
       {/* Fixed Bottom Bar - Selected Pages */}
-      {selectedPages.length > 0 && (
+      {selectedPages.length > 0 && !bulkImportMode && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-300 shadow-lg p-4 z-40">
-          <h3 className="text-sm font-semibold mb-2 text-gray-700">Click images to add to canvas:</h3>
-          <div className="flex space-x-3 overflow-x-auto pb-2" style={{ maxHeight: '120px' }}>
-            {selectedPages.map((page, index) => (
-              <div
-                key={index}
-                className="flex-shrink-0 border-2 border-gray-300 rounded-lg p-2 cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
-                onClick={() => addImageToCanvas(page)}
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-gray-700">
+              {bottomBarMultiSelect 
+                ? `Select images to add to canvas (${selectedBottomBarImages.length} selected):`
+                : "Click images to add to canvas:"
+              }
+            </h3>
+            <div className="flex space-x-2">
+              <button
+                onClick={() => setBottomBarMultiSelect(!bottomBarMultiSelect)}
+                className={`px-3 py-1 rounded text-xs ${
+                  bottomBarMultiSelect 
+                    ? 'bg-blue-500 hover:bg-blue-600 text-white' 
+                    : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                }`}
               >
-                <img
-                  src={page.canvas.toDataURL()}
-                  alt={`Selected Page ${page.pageNumber}`}
-                  className="w-16 h-20 object-contain rounded"
-                />
-                <p className="text-center mt-1 text-xs text-gray-600">Page {page.pageNumber}</p>
-              </div>
-            ))}
+                {bottomBarMultiSelect ? 'Multi-Select: ON' : 'Multi-Select: OFF'}
+              </button>
+              {bottomBarMultiSelect && (
+                <>
+                  <button
+                    onClick={selectAllBottomBarImages}
+                    className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-xs"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={deselectAllBottomBarImages}
+                    className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs"
+                  >
+                    Deselect All
+                  </button>
+                  <button
+                    onClick={addSelectedBottomBarImagesToCanvas}
+                    className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded text-xs"
+                    disabled={selectedBottomBarImages.length === 0}
+                  >
+                    Add Selected ({selectedBottomBarImages.length})
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="flex space-x-3 overflow-x-auto pb-2" style={{ maxHeight: '120px' }}>
+            {selectedPages.map((page, index) => {
+              const isSelected = selectedBottomBarImages.some(img => img.pageNumber === page.pageNumber);
+              return (
+                <div
+                  key={index}
+                  className={`flex-shrink-0 border-2 rounded-lg p-2 cursor-pointer transition-colors relative ${
+                    bottomBarMultiSelect && isSelected 
+                      ? 'border-blue-500 bg-blue-50' 
+                      : 'border-gray-300 hover:border-blue-500 hover:bg-blue-50'
+                  }`}
+                  onClick={() => toggleBottomBarImageSelection(page)}
+                >
+                  <img
+                    src={page.canvas.toDataURL()}
+                    alt={`Selected Page ${page.pageNumber}`}
+                    className="w-16 h-20 object-contain rounded"
+                  />
+                  <p className="text-center mt-1 text-xs text-gray-600">Page {page.pageNumber}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
