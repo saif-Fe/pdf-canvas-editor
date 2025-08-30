@@ -541,7 +541,7 @@ export default function PDFCanvasEditor() {
     setSelectedImageId(id);
   }, []);
 
-  const checkDeselect = (e: any) => {
+  const checkDeselect = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     const clickedOnEmpty = e.target === e.target.getStage();
     if (clickedOnEmpty) {
       setSelectedImageId(null);
